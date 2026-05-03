@@ -1,0 +1,190 @@
+{
+  "info": {
+    "_postman_id": "greencycle-collection-v1",
+    "name": "GreenCycle API",
+    "description": "Complete test suite for the GreenCycle smart appliance scheduler.\n\nImport this file into Postman: File → Import → Upload Files.\n\nMake sure the Spring Boot app is running on port 8080 first.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Calculate — Dishwasher (85281 Phoenix AZ)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/calculate?appliance=Dishwasher&zip=85281",
+          "host": ["{{baseUrl}}"],
+          "path": ["calculate"],
+          "query": [
+            {"key": "appliance", "value": "Dishwasher"},
+            {"key": "zip",       "value": "85281"}
+          ]
+        },
+        "description": "Core endpoint. Returns the optimal start time for a Dishwasher cycle based on a 24-hour carbon intensity forecast for Phoenix AZ."
+      }
+    },
+    {
+      "name": "2. Calculate — EV Charger (8-hour window)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/calculate?appliance=EV Charger&zip=90210",
+          "host": ["{{baseUrl}}"],
+          "path": ["calculate"],
+          "query": [
+            {"key": "appliance", "value": "EV Charger"},
+            {"key": "zip",       "value": "90210"}
+          ]
+        },
+        "description": "EV Charger has an 8-hour duration. The sliding window must find the cleanest consecutive 8-hour block."
+      }
+    },
+    {
+      "name": "3. Calculate — Dryer (case-insensitive)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/calculate?appliance=dryer&zip=77001",
+          "host": ["{{baseUrl}}"],
+          "path": ["calculate"],
+          "query": [
+            {"key": "appliance", "value": "dryer"},
+            {"key": "zip",       "value": "77001"}
+          ]
+        },
+        "description": "Lowercase 'dryer' should match 'Dryer' in the database."
+      }
+    },
+    {
+      "name": "4. Calculate — ERROR: Unknown appliance",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/calculate?appliance=Time Machine&zip=85281",
+          "host": ["{{baseUrl}}"],
+          "path": ["calculate"],
+          "query": [
+            {"key": "appliance", "value": "Time Machine"},
+            {"key": "zip",       "value": "85281"}
+          ]
+        },
+        "description": "Should return 400 Bad Request with a helpful error message listing how to see valid appliance names."
+      }
+    },
+    {
+      "name": "5. Calculate — ERROR: Missing zip",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/calculate?appliance=Dryer",
+          "host": ["{{baseUrl}}"],
+          "path": ["calculate"],
+          "query": [
+            {"key": "appliance", "value": "Dryer"}
+          ]
+        },
+        "description": "Should return 400 Bad Request — zip is required."
+      }
+    },
+    {
+      "name": "6. List All Appliances",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/appliances",
+          "host": ["{{baseUrl}}"],
+          "path": ["appliances"]
+        },
+        "description": "Returns all appliances currently in the H2 database. Should include the 6 seeded records from data.sql."
+      }
+    },
+    {
+      "name": "7. Add Custom Appliance",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Hot Tub\",\n  \"durationHours\": 3.0\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/appliances",
+          "host": ["{{baseUrl}}"],
+          "path": ["appliances"]
+        },
+        "description": "Creates a new appliance at runtime. Returns 201 Created with the saved record including its auto-generated id."
+      }
+    },
+    {
+      "name": "8. Calculate — Hot Tub (after adding it)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/calculate?appliance=Hot Tub&zip=85281",
+          "host": ["{{baseUrl}}"],
+          "path": ["calculate"],
+          "query": [
+            {"key": "appliance", "value": "Hot Tub"},
+            {"key": "zip",       "value": "85281"}
+          ]
+        },
+        "description": "Run this after request #7. The newly added Hot Tub should now be schedulable."
+      }
+    },
+    {
+      "name": "9. Delete Appliance (replace {id})",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/appliances/7",
+          "host": ["{{baseUrl}}"],
+          "path": ["appliances", "7"]
+        },
+        "description": "Delete by ID. Replace '7' with the id returned by request #7. Returns 204 No Content on success."
+      }
+    },
+    {
+      "name": "10. Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        },
+        "description": "Simple liveness probe. Should return {\"status\":\"UP\"}."
+      }
+    },
+    {
+      "name": "11. Spring Actuator Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/actuator/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["actuator", "health"]
+        },
+        "description": "Spring Boot's built-in health endpoint. Includes DB connectivity check."
+      }
+    }
+  ]
+}
