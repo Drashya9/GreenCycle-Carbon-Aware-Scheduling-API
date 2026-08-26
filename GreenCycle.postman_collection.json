@@ -1,14 +1,19 @@
 {
   "info": {
-    "_postman_id": "greencycle-collection-v1",
+    "_postman_id": "greencycle-collection-v2",
     "name": "GreenCycle API",
-    "description": "Complete test suite for the GreenCycle smart appliance scheduler.\n\nImport this file into Postman: File → Import → Upload Files.\n\nMake sure the Spring Boot app is running on port 8080 first.",
+    "description": "Test suite for the GreenCycle Go service: appliance CRUD, carbon-aware scheduling (single-zip and concurrent multi-zip), and the background scheduler.\n\nImport this file into Postman: File → Import → Upload Files.\n\nStart the stack first: `docker compose up --build` (or `go run ./cmd/server` against a local Postgres/Redis).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
       "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "scheduleId",
+      "value": "1",
       "type": "string"
     }
   ],
@@ -27,7 +32,7 @@
             {"key": "zip",       "value": "85281"}
           ]
         },
-        "description": "Core endpoint. Returns the optimal start time for a Dishwasher cycle based on a 24-hour carbon intensity forecast for Phoenix AZ."
+        "description": "Races every configured grid provider (context+select), caches the winning forecast in Redis, and runs the sliding-window algorithm. Response includes which provider answered."
       }
     },
     {
@@ -48,24 +53,7 @@
       }
     },
     {
-      "name": "3. Calculate — Dryer (case-insensitive)",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/calculate?appliance=dryer&zip=77001",
-          "host": ["{{baseUrl}}"],
-          "path": ["calculate"],
-          "query": [
-            {"key": "appliance", "value": "dryer"},
-            {"key": "zip",       "value": "77001"}
-          ]
-        },
-        "description": "Lowercase 'dryer' should match 'Dryer' in the database."
-      }
-    },
-    {
-      "name": "4. Calculate — ERROR: Unknown appliance",
+      "name": "3. Calculate — ERROR: Unknown appliance",
       "request": {
         "method": "GET",
         "header": [],
@@ -82,23 +70,24 @@
       }
     },
     {
-      "name": "5. Calculate — ERROR: Missing zip",
+      "name": "4. Calculate Multi — concurrent worker-pool fan-out",
       "request": {
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{baseUrl}}/calculate?appliance=Dryer",
+          "raw": "{{baseUrl}}/calculate/multi?appliance=Dryer&zips=85281,90001,10001,77001,60601",
           "host": ["{{baseUrl}}"],
-          "path": ["calculate"],
+          "path": ["calculate", "multi"],
           "query": [
-            {"key": "appliance", "value": "Dryer"}
+            {"key": "appliance", "value": "Dryer"},
+            {"key": "zips",      "value": "85281,90001,10001,77001,60601"}
           ]
         },
-        "description": "Should return 400 Bad Request — zip is required."
+        "description": "Fetches every zip code concurrently through a bounded worker pool (default 5 workers), racing all configured providers for each one. Returns a per-zip breakdown plus the single greenest option."
       }
     },
     {
-      "name": "6. List All Appliances",
+      "name": "5. List All Appliances",
       "request": {
         "method": "GET",
         "header": [],
@@ -107,11 +96,11 @@
           "host": ["{{baseUrl}}"],
           "path": ["appliances"]
         },
-        "description": "Returns all appliances currently in the H2 database. Should include the 6 seeded records from data.sql."
+        "description": "Returns all appliances in Postgres. Should include the 6 seeded records from the 0002_seed_appliances migration."
       }
     },
     {
-      "name": "7. Add Custom Appliance",
+      "name": "6. Add Custom Appliance",
       "request": {
         "method": "POST",
         "header": [
@@ -131,24 +120,7 @@
       }
     },
     {
-      "name": "8. Calculate — Hot Tub (after adding it)",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/calculate?appliance=Hot Tub&zip=85281",
-          "host": ["{{baseUrl}}"],
-          "path": ["calculate"],
-          "query": [
-            {"key": "appliance", "value": "Hot Tub"},
-            {"key": "zip",       "value": "85281"}
-          ]
-        },
-        "description": "Run this after request #7. The newly added Hot Tub should now be schedulable."
-      }
-    },
-    {
-      "name": "9. Delete Appliance (replace {id})",
+      "name": "7. Delete Appliance (replace {id})",
       "request": {
         "method": "DELETE",
         "header": [],
@@ -157,11 +129,73 @@
           "host": ["{{baseUrl}}"],
           "path": ["appliances", "7"]
         },
-        "description": "Delete by ID. Replace '7' with the id returned by request #7. Returns 204 No Content on success."
+        "description": "Delete by ID. Replace '7' with the id returned by request #6. Returns 204 No Content on success."
       }
     },
     {
-      "name": "10. Health Check",
+      "name": "8. Create Scheduled Run",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"applianceName\": \"Washing Machine\",\n  \"zip\": \"85281\",\n  \"webhookUrl\": \"https://webhook.site/YOUR-UNIQUE-ID\"\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/schedules",
+          "host": ["{{baseUrl}}"],
+          "path": ["schedules"]
+        },
+        "description": "Computes the optimal window via the same pipeline as /calculate, then persists it as a pending scheduled run. The background scheduler engine fires a webhook (+ writes a notification record) the moment the window starts. Get a free webhookUrl at https://webhook.site to watch it fire. webhookUrl is optional — omit it to fall back to SCHEDULER_WEBHOOK_URL."
+      }
+    },
+    {
+      "name": "9. List Scheduled Runs",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/schedules?status=pending",
+          "host": ["{{baseUrl}}"],
+          "path": ["schedules"],
+          "query": [
+            {"key": "status", "value": "pending", "description": "optional: pending | fired | failed | cancelled"}
+          ]
+        },
+        "description": "Lists scheduled runs, optionally filtered by status."
+      }
+    },
+    {
+      "name": "10. Get Scheduled Run",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/schedules/{{scheduleId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["schedules", "{{scheduleId}}"]
+        },
+        "description": "Fetch one scheduled run by id — check its status to see whether the engine has fired it yet."
+      }
+    },
+    {
+      "name": "11. Cancel Scheduled Run",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/schedules/{{scheduleId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["schedules", "{{scheduleId}}"]
+        },
+        "description": "Cancels a run while it's still pending. Returns 204, or 404 if it's already fired/failed/cancelled."
+      }
+    },
+    {
+      "name": "12. Health Check",
       "request": {
         "method": "GET",
         "header": [],
@@ -170,20 +204,7 @@
           "host": ["{{baseUrl}}"],
           "path": ["health"]
         },
-        "description": "Simple liveness probe. Should return {\"status\":\"UP\"}."
-      }
-    },
-    {
-      "name": "11. Spring Actuator Health",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/actuator/health",
-          "host": ["{{baseUrl}}"],
-          "path": ["actuator", "health"]
-        },
-        "description": "Spring Boot's built-in health endpoint. Includes DB connectivity check."
+        "description": "Liveness + dependency check. Reports Postgres and Redis connectivity."
       }
     }
   ]

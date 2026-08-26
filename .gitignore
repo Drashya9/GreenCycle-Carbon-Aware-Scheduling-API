@@ -1,7 +1,10 @@
-target/
-!.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
+# Go build artifacts
+/greencycle
+*.exe
+*.test
+
+# Local environment secrets — never commit
+.env
 
 ### VS Code ###
 .vscode/

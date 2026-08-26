@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-greencycle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-greencycle}
+      POSTGRES_DB: ${POSTGRES_DB:-greencycle}
+    # Not published to the host by default (avoids clashing with a local Postgres) —
+    # the app reaches it over the compose network at postgres:5432. Uncomment to
+    # connect an external client such as psql or a GUI tool directly:
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-greencycle}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # Not published to the host by default, same reasoning as postgres above.
+    # ports:
+    #   - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  adminer:
+    image: adminer:4
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+
+  app:
+    build: .
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://${POSTGRES_USER:-greencycle}:${POSTGRES_PASSWORD:-greencycle}@postgres:5432/${POSTGRES_DB:-greencycle}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      GRID_PROVIDERS: ${GRID_PROVIDERS:-mock}
+      ELECTRICITYMAPS_API_KEY: ${ELECTRICITYMAPS_API_KEY:-}
+      WATTTIME_USERNAME: ${WATTTIME_USERNAME:-}
+      WATTTIME_PASSWORD: ${WATTTIME_PASSWORD:-}
+      FORECAST_CACHE_TTL: ${FORECAST_CACHE_TTL:-15m}
+      GRID_RATE_LIMIT_RPS: ${GRID_RATE_LIMIT_RPS:-2}
+      SCHEDULER_POLL_INTERVAL: ${SCHEDULER_POLL_INTERVAL:-15s}
+      SCHEDULER_WEBHOOK_URL: ${SCHEDULER_WEBHOOK_URL:-}
+      MULTIZONE_WORKERS: ${MULTIZONE_WORKERS:-5}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
