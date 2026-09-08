@@ -21,6 +21,7 @@ import (
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/httpapi"
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/repository"
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/scheduler"
+	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/web"
 )
 
 func main() {
@@ -61,6 +62,7 @@ func main() {
 		cfg.SchedulerWebhookURL,
 		dbx,
 		redisClient,
+		web.FS,
 	)
 
 	httpServer := &http.Server{

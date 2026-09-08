@@ -3,6 +3,7 @@ package httpapi
 
 import (
 	"context"
+	"io/fs"
 	"net/http"
 	"time"
 
@@ -48,6 +49,7 @@ type Server struct {
 
 	db          dbPinger
 	redisClient *redis.Client
+	webUI       fs.FS
 }
 
 func NewServer(
@@ -59,6 +61,7 @@ func NewServer(
 	defaultWebhookURL string,
 	db *sqlx.DB,
 	redisClient *redis.Client,
+	webUI fs.FS,
 ) *Server {
 	return &Server{
 		applianceRepo:     applianceRepo,
@@ -69,6 +72,7 @@ func NewServer(
 		defaultWebhookURL: defaultWebhookURL,
 		db:                db,
 		redisClient:       redisClient,
+		webUI:             webUI,
 	}
 }
 
@@ -92,7 +96,21 @@ func (s *Server) Router() http.Handler {
 	r.Get("/schedules/{id}", s.handleGetSchedule)
 	r.Delete("/schedules/{id}", s.handleCancelSchedule)
 
+	if s.webUI != nil {
+		r.Get("/", s.handleWebUIFile("index.html"))
+		r.Get("/style.css", s.handleWebUIFile("style.css"))
+		r.Get("/app.js", s.handleWebUIFile("app.js"))
+	}
+
 	return r
+}
+
+// handleWebUIFile serves one embedded dashboard asset. Explicit routes (rather than a
+// wildcard file server) keep the small, fixed asset set from ever shadowing an API path.
+func (s *Server) handleWebUIFile(name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, s.webUI, name)
+	}
 }
 
 // corsMiddleware allows calls from any origin during development, matching the Java
