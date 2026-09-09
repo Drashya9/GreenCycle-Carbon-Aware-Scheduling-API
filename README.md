@@ -76,6 +76,25 @@ If Redis isn't reachable, the app logs a warning and runs uncached rather than f
 go build ./... && go vet ./... && go test ./...
 ```
 
+### What's tested where
+
+Go keeps test files next to the code they test (not in a separate `test/` directory) —
+several of the tests below reach into unexported internals (private struct fields,
+private methods) that only compile because the test lives in the same package.
+
+| Test file | Package | Covers |
+|---|---|---|
+| [internal/algorithm/slidingwindow_test.go](internal/algorithm/slidingwindow_test.go) | `algorithm` | The sliding-window algorithm itself: optimal window at the start/middle/end of the forecast, all-equal values, an oversized window, fractional durations, and that the recommendation text includes the appliance name. |
+| [internal/scheduler/engine_test.go](internal/scheduler/engine_test.go) | `scheduler` | The background engine's concurrency guarantees, against an in-memory fake repo: 5 overlapping poll ticks claiming the same due row fire exactly one webhook; an overdue run fires immediately on startup catch-up (flagged `firedLate`); an on-time fire isn't flagged late; a failed webhook delivery marks the run `failed` but still writes a notification. |
+| [internal/httpapi/handlers_test.go](internal/httpapi/handlers_test.go) | `httpapi` | HTTP handlers end-to-end through the real chi router, against in-memory fake stores: `/calculate` happy path and unknown-appliance error, full appliance CRUD, and `POST /schedules` persisting a pending run. |
+| [internal/grid/race_test.go](internal/grid/race_test.go) | `grid` | Proves the provider-racing concurrency claim with real timing: 3 simulated providers (120/140/160ms latency) called sequentially vs. through the actual `RaceProviders` function — asserts the concurrent path is faster and lands near the fastest provider, not the sum of all three. |
+| [internal/grid/cache_test.go](internal/grid/cache_test.go) | `grid` | Proves the Redis caching claim with real timing, against a real Redis instance: one cold cache-miss call vs. 10 concurrent cache-hit calls for the same key — asserts the batch of hits is faster than the single miss. Needs `REDIS_URL` reachable; skips automatically otherwise, so it never blocks CI. |
+
+**Coverage by package** (`go test ./... -cover`): `algorithm` ~95%, `scheduler` ~70%,
+`httpapi` ~37%, `grid` ~7% (covers the concurrency/caching behavior above, but not the
+real `electricitymaps`/`watttime` HTTP clients); `repository`, `db`, `cache`, and `config`
+have no tests yet.
+
 ---
 
 ## Dashboard UI

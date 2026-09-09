@@ -6,5 +6,9 @@
 # Local environment secrets — never commit
 .env
 
+# Personal reference docs (resume/interview prep) — never commit
+docs/GreenCycle_Interview_Prep.docx
+docs/~$*.docx
+
 ### VS Code ###
 .vscode/
