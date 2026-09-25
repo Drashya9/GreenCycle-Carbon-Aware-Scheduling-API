@@ -89,11 +89,21 @@ private methods) that only compile because the test lives in the same package.
 | [internal/httpapi/handlers_test.go](internal/httpapi/handlers_test.go) | `httpapi` | HTTP handlers end-to-end through the real chi router, against in-memory fake stores: `/calculate` happy path and unknown-appliance error, full appliance CRUD, and `POST /schedules` persisting a pending run. |
 | [internal/grid/race_test.go](internal/grid/race_test.go) | `grid` | Proves the provider-racing concurrency claim with real timing: 3 simulated providers (120/140/160ms latency) called sequentially vs. through the actual `RaceProviders` function — asserts the concurrent path is faster and lands near the fastest provider, not the sum of all three. |
 | [internal/grid/cache_test.go](internal/grid/cache_test.go) | `grid` | Proves the Redis caching claim with real timing, against a real Redis instance: one cold cache-miss call vs. 10 concurrent cache-hit calls for the same key — asserts the batch of hits is faster than the single miss. Needs `REDIS_URL` reachable; skips automatically otherwise, so it never blocks CI. |
+| [internal/repository/appliance_repo_test.go](internal/repository/appliance_repo_test.go) | `repository` | Appliance CRUD against a real Postgres: create + case-insensitive lookup (`LOWER(name) = LOWER($1)`), not-found paths for lookup and delete. |
+| [internal/repository/scheduledrun_repo_test.go](internal/repository/scheduledrun_repo_test.go) | `repository` | The scheduled-run queries against a real Postgres, including the one that matters most: `ClaimForFiring` under 20 genuinely concurrent goroutines against a real connection pool, asserting exactly one claim succeeds and `attempt_count` ends at 1 — the same guarantee `scheduler/engine_test.go` proves against a fake, now proven against the real SQL. Also covers create/find, cancel-only-while-pending, and `FindDuePending`'s time filter. |
 
-**Coverage by package** (`go test ./... -cover`): `algorithm` ~95%, `scheduler` ~70%,
+Both repository test files connect via `DATABASE_URL` (defaults to
+`postgres://greencycle:greencycle@localhost:5432/greencycle?sslmode=disable`) and run the
+real migrations on connect — point it at any empty Postgres and it self-provisions the
+schema. Skips automatically if unreachable, so it never blocks CI or a machine without
+Postgres running.
+
+**Coverage by package** (`go test ./... -cover`): `algorithm` ~95%, `scheduler` ~72%,
 `httpapi` ~37%, `grid` ~7% (covers the concurrency/caching behavior above, but not the
-real `electricitymaps`/`watttime` HTTP clients); `repository`, `db`, `cache`, and `config`
-have no tests yet.
+real `electricitymaps`/`watttime` HTTP clients), `repository` ~58% when run against a real
+Postgres (0% otherwise, since the tests skip without one — this is the one package where
+the "no tests" number depends entirely on whether the run had a database); `db`, `cache`,
+and `config` have no tests yet.
 
 ---
 
