@@ -10,6 +10,32 @@ jobs:
   test:
     name: Build, vet, test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: greencycle
+          POSTGRES_PASSWORD: greencycle
+          POSTGRES_DB: greencycle
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://greencycle:greencycle@localhost:5432/greencycle?sslmode=disable
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
