@@ -5,6 +5,11 @@
 
 # Local environment secrets — never commit
 .env
+.env.local
+.env*.local
+
+# Vercel CLI project link
+.vercel
 
 # Personal reference docs (resume/interview prep) — never commit
 docs/GreenCycle_Interview_Prep.docx

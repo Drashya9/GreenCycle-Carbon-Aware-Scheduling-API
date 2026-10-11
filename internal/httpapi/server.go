@@ -50,6 +50,9 @@ type Server struct {
 	db          dbPinger
 	redisClient *redis.Client
 	webUI       fs.FS
+
+	cronSecret string
+	cronTick   func(ctx context.Context) int
 }
 
 func NewServer(
@@ -76,6 +79,15 @@ func NewServer(
 	}
 }
 
+// EnableCron exposes GET /api/cron/tick, which runs one scheduler pass on demand — how runs
+// get fired on hosts that can't keep the background poll loop alive (Vercel Cron, or any
+// external pinger). Callers must send secret as a Bearer token; an empty secret leaves the
+// endpoint unregistered. Must be called before Router.
+func (s *Server) EnableCron(secret string, tick func(ctx context.Context) int) {
+	s.cronSecret = secret
+	s.cronTick = tick
+}
+
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -95,6 +107,10 @@ func (s *Server) Router() http.Handler {
 	r.Get("/schedules", s.handleListSchedules)
 	r.Get("/schedules/{id}", s.handleGetSchedule)
 	r.Delete("/schedules/{id}", s.handleCancelSchedule)
+
+	if s.cronSecret != "" && s.cronTick != nil {
+		r.Get("/api/cron/tick", s.handleCronTick)
+	}
 
 	if s.webUI != nil {
 		r.Get("/", s.handleWebUIFile("index.html"))

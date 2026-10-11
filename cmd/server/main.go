@@ -36,10 +36,14 @@ func main() {
 	}
 	defer dbx.Close()
 
-	if err := db.Migrate(dbx); err != nil {
-		log.Fatalf("run migrations: %v", err)
+	if cfg.RunMigrations {
+		if err := db.Migrate(dbx); err != nil {
+			log.Fatalf("run migrations: %v", err)
+		}
+		log.Println("migrations up to date")
+	} else {
+		log.Println("skipping migrations (RUN_MIGRATIONS=false) — apply them with cmd/migrate")
 	}
-	log.Println("migrations up to date")
 
 	redisClient, err := cache.NewClient(cfg.RedisURL)
 	if err != nil {
@@ -65,21 +69,26 @@ func main() {
 		web.FS,
 	)
 
+	engine := scheduler.NewEngine(runRepo, cfg.SchedulerWebhookURL, cfg.SchedulerPollInterval, cfg.SchedulerWebhookTimeout)
+	server.EnableCron(cfg.CronSecret, engine.RunOnce)
+
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: server.Router(),
 	}
 
-	engine := scheduler.NewEngine(runRepo, cfg.SchedulerWebhookURL, cfg.SchedulerPollInterval, cfg.SchedulerWebhookTimeout)
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go func() {
-		log.Println("scheduler engine started")
-		engine.Run(ctx)
-		log.Println("scheduler engine stopped")
-	}()
+	if cfg.SchedulerEnabled {
+		go func() {
+			log.Println("scheduler engine started")
+			engine.Run(ctx)
+			log.Println("scheduler engine stopped")
+		}()
+	} else {
+		log.Println("scheduler engine disabled (SCHEDULER_ENABLED=false) — runs fire only via /api/cron/tick")
+	}
 
 	go func() {
 		log.Printf("listening on :%s", cfg.Port)

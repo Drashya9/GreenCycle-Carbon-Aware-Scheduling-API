@@ -67,20 +67,36 @@ func (e *Engine) Run(ctx context.Context) {
 }
 
 func (e *Engine) tick(ctx context.Context) {
+	e.dispatch(ctx, &e.wg)
+}
+
+// RunOnce does a single poll-and-fire pass and waits for every fire it started before
+// returning the number of due runs it picked up. It exists for hosts where a background
+// ticker can't be relied on (a cron-invoked endpoint). It uses its own WaitGroup so
+// overlapping calls can't interfere with each other or with Run's shutdown wait.
+func (e *Engine) RunOnce(ctx context.Context) int {
+	var wg sync.WaitGroup
+	n := e.dispatch(ctx, &wg)
+	wg.Wait()
+	return n
+}
+
+func (e *Engine) dispatch(ctx context.Context, wg *sync.WaitGroup) int {
 	now := time.Now()
 	due, err := e.repo.FindDuePending(ctx, now, batchLimit)
 	if err != nil {
 		log.Printf("scheduler: find due runs: %v", err)
-		return
+		return 0
 	}
 
 	for _, run := range due {
-		e.wg.Add(1)
+		wg.Add(1)
 		go func(run models.ScheduledRun) {
-			defer e.wg.Done()
+			defer wg.Done()
 			e.fire(ctx, run, now)
 		}(run)
 	}
+	return len(due)
 }
 
 func (e *Engine) fire(ctx context.Context, run models.ScheduledRun, tickTime time.Time) {
