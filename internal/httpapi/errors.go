@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 )
@@ -22,6 +23,13 @@ func writeError(w http.ResponseWriter, status int, message string) {
 		Error:     http.StatusText(status),
 		Message:   message,
 	})
+}
+
+// writeInternalError logs err server-side and returns a generic 500, so database and driver
+// details (constraint names, SQLSTATEs, hostnames) never reach a client.
+func writeInternalError(w http.ResponseWriter, action string, err error) {
+	log.Printf("httpapi: %s: %v", action, err)
+	writeError(w, http.StatusInternalServerError, "failed to "+action)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -46,12 +45,16 @@ func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "appliance not found: '"+req.ApplianceName+"'")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "look up appliance", err)
 		return
 	}
 
 	window, err := s.calculateWindow(r.Context(), appliance.Name, req.Zip)
 	if err != nil {
+		if errors.Is(err, errInternal) {
+			writeInternalError(w, "calculate window", err)
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -65,11 +68,11 @@ func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 		AverageCarbonIntensity: window.AverageCarbonIntensity,
 	}
 	if req.WebhookURL != "" {
-		run.WebhookURL = sql.Null[string]{V: req.WebhookURL, Valid: true}
+		run.WebhookURL = models.NewNull(req.WebhookURL)
 	}
 
 	if err := s.runRepo.Create(r.Context(), run); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create scheduled run: "+err.Error())
+		writeInternalError(w, "create scheduled run", err)
 		return
 	}
 
@@ -80,8 +83,11 @@ func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	runs, err := s.runRepo.FindAll(r.Context(), status)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list scheduled runs: "+err.Error())
+		writeInternalError(w, "list scheduled runs", err)
 		return
+	}
+	if runs == nil {
+		runs = []models.ScheduledRun{}
 	}
 	writeJSON(w, http.StatusOK, runs)
 }
@@ -99,7 +105,7 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "get scheduled run", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
@@ -117,7 +123,7 @@ func (s *Server) handleCancelSchedule(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "scheduled run not found or no longer pending")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "cancel scheduled run", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

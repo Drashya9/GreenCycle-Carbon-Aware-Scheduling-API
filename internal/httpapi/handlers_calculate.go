@@ -13,6 +13,10 @@ import (
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/repository"
 )
 
+// errInternal marks calculateWindow failures that are the server's fault rather than the
+// caller's, so handlers answer 500 without echoing the underlying error.
+var errInternal = errors.New("internal error")
+
 // calculateWindow is the shared pipeline behind both GET /calculate and POST /schedules:
 // look up the appliance, race every configured grid provider for a forecast, then run the
 // sliding-window algorithm over it.
@@ -22,7 +26,7 @@ func (s *Server) calculateWindow(ctx context.Context, applianceName, zip string)
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, fmt.Errorf("appliance not found: '%s'. Call GET /appliances to see available options", applianceName)
 		}
-		return nil, err
+		return nil, fmt.Errorf("%w: look up appliance: %v", errInternal, err)
 	}
 
 	raceCtx, cancel := context.WithTimeout(ctx, s.raceTimeout)
@@ -57,6 +61,10 @@ func (s *Server) handleCalculate(w http.ResponseWriter, r *http.Request) {
 
 	window, err := s.calculateWindow(r.Context(), appliance, zip)
 	if err != nil {
+		if errors.Is(err, errInternal) {
+			writeInternalError(w, "calculate window", err)
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -96,7 +104,7 @@ func (s *Server) handleCalculateMulti(w http.ResponseWriter, r *http.Request) {
 				"appliance not found: '%s'. Call GET /appliances to see available options", applianceName))
 			return
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "look up appliance", err)
 		return
 	}
 

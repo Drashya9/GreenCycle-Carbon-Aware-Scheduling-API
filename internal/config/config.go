@@ -65,7 +65,8 @@ func Load() Config {
 
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://greencycle:greencycle@localhost:5432/greencycle?sslmode=disable"),
 
-		RedisURL: getEnv("REDIS_URL", "redis://localhost:6379/0"),
+		// KV_URL is the rediss:// URL Vercel's Upstash integration injects.
+		RedisURL: getEnv("REDIS_URL", getEnv("KV_URL", "redis://localhost:6379/0")),
 
 		GridProviders: splitCSV(getEnv("GRID_PROVIDERS", "mock")),
 

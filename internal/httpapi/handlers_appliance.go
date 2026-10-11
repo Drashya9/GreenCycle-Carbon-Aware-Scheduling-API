@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,8 +17,11 @@ import (
 func (s *Server) handleListAppliances(w http.ResponseWriter, r *http.Request) {
 	appliances, err := s.applianceRepo.FindAll(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list appliances: "+err.Error())
+		writeInternalError(w, "list appliances", err)
 		return
+	}
+	if appliances == nil {
+		appliances = []models.Appliance{}
 	}
 	writeJSON(w, http.StatusOK, appliances)
 }
@@ -38,7 +42,11 @@ func (s *Server) handleCreateAppliance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.applianceRepo.Create(r.Context(), &a); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create appliance: "+err.Error())
+		if errors.Is(err, repository.ErrConflict) {
+			writeError(w, http.StatusConflict, fmt.Sprintf("appliance %q already exists", a.Name))
+			return
+		}
+		writeInternalError(w, "create appliance", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, a)
@@ -56,7 +64,7 @@ func (s *Server) handleDeleteAppliance(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to delete appliance: "+err.Error())
+		writeInternalError(w, "delete appliance", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

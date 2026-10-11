@@ -5,12 +5,24 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/models"
 )
 
 var ErrNotFound = errors.New("not found")
+
+// ErrConflict means a write violated a uniqueness constraint, e.g. a duplicate appliance name.
+var ErrConflict = errors.New("conflict")
+
+// pgUniqueViolation is Postgres's SQLSTATE for unique_violation.
+const pgUniqueViolation = "23505"
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation
+}
 
 type ApplianceRepository struct {
 	db *sqlx.DB
@@ -53,9 +65,13 @@ func (r *ApplianceRepository) FindByID(ctx context.Context, id int64) (*models.A
 }
 
 func (r *ApplianceRepository) Create(ctx context.Context, a *models.Appliance) error {
-	return r.db.GetContext(ctx, &a.ID,
+	err := r.db.GetContext(ctx, &a.ID,
 		`INSERT INTO appliance (name, duration_hours) VALUES ($1, $2) RETURNING id`,
 		a.Name, a.DurationHours)
+	if isUniqueViolation(err) {
+		return ErrConflict
+	}
+	return err
 }
 
 func (r *ApplianceRepository) Delete(ctx context.Context, id int64) error {

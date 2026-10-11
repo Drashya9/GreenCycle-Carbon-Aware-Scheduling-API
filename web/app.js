@@ -41,6 +41,21 @@ function fmtTime(iso) {
   } catch { return iso; }
 }
 
+function fmtClock(iso) {
+  try {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: "numeric", minute: "2-digit", timeZoneName: "short",
+    });
+  } catch { return iso; }
+}
+
+// Built client-side rather than using the API's recommendation string, which is in UTC —
+// so the headline matches the local-time Start/End shown beneath it.
+function recommendationText(w) {
+  return `Run your ${w.applianceName} at ${fmtClock(w.startTime)} — avg. ` +
+    `${Math.round(w.averageCarbonIntensity)} gCO₂/kWh (done by ${fmtClock(w.endTime)}).`;
+}
+
 // ── tabs ─────────────────────────────────────────────────────────────────
 
 document.getElementById("tabs").addEventListener("click", (e) => {
@@ -154,7 +169,7 @@ document.getElementById("calcForm").addEventListener("submit", async (e) => {
   try {
     const w = await api(`/calculate?appliance=${encodeURIComponent(appliance)}&zip=${encodeURIComponent(zip)}`);
     area.appendChild(el("div", { class: "result-card" }, [
-      el("div", { class: "headline", text: w.recommendation }),
+      el("div", { class: "headline", text: recommendationText(w) }),
       el("div", { class: "metric-row" }, [
         el("div", { class: "metric" }, [el("span", { class: "label", text: "Start" }), el("span", { class: "value", text: fmtTime(w.startTime) })]),
         el("div", { class: "metric" }, [el("span", { class: "label", text: "End" }), el("span", { class: "value", text: fmtTime(w.endTime) })]),
