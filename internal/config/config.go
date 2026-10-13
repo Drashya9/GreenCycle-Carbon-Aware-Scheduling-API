@@ -44,6 +44,10 @@ type Config struct {
 	// SchedulerWebhookTimeout bounds a single webhook POST attempt.
 	SchedulerWebhookTimeout time.Duration
 
+	// SchedulerWebhookMaxAttempts is how many times a run's webhook is tried (1m, 2m, 4m…
+	// apart) before the run is marked failed.
+	SchedulerWebhookMaxAttempts int
+
 	// MultiZoneWorkers bounds how many zip codes /calculate/multi fetches concurrently.
 	MultiZoneWorkers int
 
@@ -88,6 +92,8 @@ func Load() Config {
 		SchedulerWebhookURL: os.Getenv("SCHEDULER_WEBHOOK_URL"),
 
 		SchedulerWebhookTimeout: getDuration("SCHEDULER_WEBHOOK_TIMEOUT", 5*time.Second),
+
+		SchedulerWebhookMaxAttempts: getInt("SCHEDULER_WEBHOOK_MAX_ATTEMPTS", 3),
 
 		MultiZoneWorkers: getInt("MULTIZONE_WORKERS", 5),
 

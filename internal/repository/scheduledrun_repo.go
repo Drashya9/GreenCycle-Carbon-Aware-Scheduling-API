@@ -74,28 +74,48 @@ func (r *ScheduledRunRepository) Cancel(ctx context.Context, id int64) error {
 	return nil
 }
 
-// FindDuePending returns pending runs whose window has already started, oldest first.
+const (
+	// claimLease is how long a run may sit claimed as 'fired' with no notification before
+	// it's treated as abandoned mid-delivery (e.g. the process died or the function was cut
+	// off) and becomes claimable again. Far longer than one fire takes.
+	claimLease = 5 * time.Minute
+	// reclaimWindow bounds how far back abandoned claims are recovered, so old rows (e.g.
+	// claimed before recovery existed) are never resurrected.
+	reclaimWindow = 24 * time.Hour
+)
+
+// dueCondition is the one definition of "claimable", shared by FindDuePending and
+// ClaimForFiring so they can't disagree: a pending run whose start time and any retry
+// backoff have passed, or a claimed run abandoned mid-delivery. Arguments are placeholders.
+func dueCondition(now, leaseCutoff, windowStart string) string {
+	return `(status = 'pending' AND start_time <= ` + now + `
+	         AND (next_attempt_at IS NULL OR next_attempt_at <= ` + now + `))
+	     OR (status = 'fired' AND fired_at <= ` + leaseCutoff + ` AND fired_at > ` + windowStart + `
+	         AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.scheduled_run_id = scheduled_run.id))`
+}
+
+// FindDuePending returns claimable runs (see dueCondition), oldest first.
 func (r *ScheduledRunRepository) FindDuePending(ctx context.Context, now time.Time, limit int) ([]models.ScheduledRun, error) {
 	var out []models.ScheduledRun
 	err := r.db.SelectContext(ctx, &out, `
 		SELECT * FROM scheduled_run
-		WHERE status = 'pending' AND start_time <= $1
+		WHERE `+dueCondition("$1", "$2", "$3")+`
 		ORDER BY start_time
-		LIMIT $2`, now, limit)
+		LIMIT $4`, now, now.Add(-claimLease), now.Add(-reclaimWindow), limit)
 	return out, err
 }
 
-// ClaimForFiring atomically flips a pending run to fired, returning the claimed row.
-// The WHERE status = 'pending' guard is a compare-and-swap: only the one caller whose
-// UPDATE actually matches a row gets it, so concurrent poll ticks (or a restart racing
-// the previous process's still-draining tick) can never fire the same run twice.
+// ClaimForFiring atomically marks a claimable run fired and returns it. The WHERE clause is
+// a compare-and-swap: only the one caller whose UPDATE matches the row gets it, so
+// concurrent ticks, overlapping cron calls or multiple instances can never fire a run
+// twice. A stale reclaim also refreshes fired_at, so a second reclaimer no longer matches.
 func (r *ScheduledRunRepository) ClaimForFiring(ctx context.Context, id int64, firedAt time.Time) (*models.ScheduledRun, error) {
 	var run models.ScheduledRun
 	err := r.db.GetContext(ctx, &run, `
 		UPDATE scheduled_run
 		SET status = 'fired', fired_at = $2, attempt_count = attempt_count + 1
-		WHERE id = $1 AND status = 'pending'
-		RETURNING *`, id, firedAt)
+		WHERE id = $1 AND (`+dueCondition("$2", "$3", "$4")+`)
+		RETURNING *`, id, firedAt, firedAt.Add(-claimLease), firedAt.Add(-reclaimWindow))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound // already claimed by another tick/instance
 	}
@@ -105,8 +125,18 @@ func (r *ScheduledRunRepository) ClaimForFiring(ctx context.Context, id int64, f
 	return &run, nil
 }
 
-// MarkFailed records a delivery failure. The row stays terminal (status='failed') rather
-// than retried — the notification row is still written so the failure is never silent.
+// MarkRetry returns a claimed run whose delivery failed to pending, to be claimed again
+// once nextAttempt has passed. The status guard keeps it from touching a cancelled run.
+func (r *ScheduledRunRepository) MarkRetry(ctx context.Context, id int64, lastError string, nextAttempt time.Time) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE scheduled_run SET status = 'pending', last_error = $2, next_attempt_at = $3
+		WHERE id = $1 AND status = 'fired'`,
+		id, lastError, nextAttempt)
+	return err
+}
+
+// MarkFailed records a delivery that failed for the last time; the run stays terminal
+// (status='failed'). The engine still writes a notification, so the failure is never silent.
 func (r *ScheduledRunRepository) MarkFailed(ctx context.Context, id int64, lastError string) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE scheduled_run SET status = 'failed', last_error = $2 WHERE id = $1`,

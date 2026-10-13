@@ -4,6 +4,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -18,6 +19,7 @@ import (
 type runRepository interface {
 	FindDuePending(ctx context.Context, now time.Time, limit int) ([]models.ScheduledRun, error)
 	ClaimForFiring(ctx context.Context, id int64, firedAt time.Time) (*models.ScheduledRun, error)
+	MarkRetry(ctx context.Context, id int64, lastError string, nextAttempt time.Time) error
 	MarkFailed(ctx context.Context, id int64, lastError string) error
 	CreateNotification(ctx context.Context, n *models.Notification) error
 }
@@ -35,10 +37,13 @@ type Engine struct {
 	pollInterval      time.Duration
 	defaultWebhookURL string
 	webhookTimeout    time.Duration
+	// maxAttempts is the delivery budget per run, counting the first attempt.
+	maxAttempts int
 
 	wg sync.WaitGroup
 }
 
+// NewEngine makes a single delivery attempt per run; call SetMaxAttempts to allow retries.
 func NewEngine(repo runRepository, defaultWebhookURL string, pollInterval, webhookTimeout time.Duration) *Engine {
 	return &Engine{
 		repo:              repo,
@@ -47,7 +52,26 @@ func NewEngine(repo runRepository, defaultWebhookURL string, pollInterval, webho
 		pollInterval:      pollInterval,
 		defaultWebhookURL: defaultWebhookURL,
 		webhookTimeout:    webhookTimeout,
+		maxAttempts:       1,
 	}
+}
+
+// SetMaxAttempts sets how many times a webhook is attempted before the run is marked
+// failed. Values below 1 are ignored.
+func (e *Engine) SetMaxAttempts(n int) {
+	if n >= 1 {
+		e.maxAttempts = n
+	}
+}
+
+// retryDelay is the backoff before the next attempt after `attempt` failed ones:
+// 1m, 2m, 4m, … capped at an hour.
+func retryDelay(attempt int) time.Duration {
+	const maxDelay = time.Hour
+	if attempt >= 7 { // 2^6 minutes already exceeds the cap; also avoids shift overflow
+		return maxDelay
+	}
+	return min(time.Minute<<(attempt-1), maxDelay)
 }
 
 // Run blocks until ctx is cancelled. It fires an immediate catch-up pass on startup —
@@ -108,15 +132,18 @@ func (e *Engine) fire(ctx context.Context, run models.ScheduledRun, tickTime tim
 	claimed, err := e.repo.ClaimForFiring(ctx, run.ID, tickTime)
 	if err != nil {
 		// ErrNotFound just means another tick (or another instance) already claimed it —
-		// the atomic UPDATE...WHERE status='pending' is what makes that safe to ignore.
+		// the atomic compare-and-swap in the claim is what makes that safe to ignore.
 		return
 	}
+
+	// The claim increments attempt_count, so this is the attempt being made now.
+	attempt := max(claimed.AttemptCount, 1)
 
 	// More than one poll interval late suggests the process was down or stalled through
 	// the scheduled start time, not just normal poll-cycle granularity.
 	firedLate := tickTime.Sub(claimed.StartTime) > e.pollInterval
 
-	message := formatMessage(*claimed, firedLate)
+	message := formatMessage(*claimed, firedLate, attempt)
 
 	webhookURL, client := e.defaultWebhookURL, e.client
 	if claimed.WebhookURL.Valid && claimed.WebhookURL.V != "" {
@@ -132,9 +159,19 @@ func (e *Engine) fire(ctx context.Context, run models.ScheduledRun, tickTime tim
 			StartTime:      claimed.StartTime,
 			EndTime:        claimed.EndTime,
 			FiredLate:      firedLate,
+			Attempt:        attempt,
 		}
 		if err := dispatchWebhook(ctx, client, webhookURL, payload, e.webhookTimeout); err != nil {
-			log.Printf("scheduler: webhook delivery failed for run %d: %v", claimed.ID, err)
+			if attempt < e.maxAttempts {
+				next := time.Now().Add(retryDelay(attempt))
+				log.Printf("scheduler: webhook attempt %d/%d failed for run %d, retrying at %s: %v",
+					attempt, e.maxAttempts, claimed.ID, next.Format(time.RFC3339), err)
+				if markErr := e.repo.MarkRetry(ctx, claimed.ID, err.Error(), next); markErr != nil {
+					log.Printf("scheduler: schedule retry for run %d: %v", claimed.ID, markErr)
+				}
+				return // notify once the run reaches a final outcome, not on every attempt
+			}
+			log.Printf("scheduler: webhook delivery failed for run %d after %d attempt(s): %v", claimed.ID, attempt, err)
 			if markErr := e.repo.MarkFailed(ctx, claimed.ID, err.Error()); markErr != nil {
 				log.Printf("scheduler: mark run %d failed: %v", claimed.ID, markErr)
 			}
@@ -152,9 +189,12 @@ func (e *Engine) fire(ctx context.Context, run models.ScheduledRun, tickTime tim
 	}
 }
 
-func formatMessage(run models.ScheduledRun, firedLate bool) string {
+func formatMessage(run models.ScheduledRun, firedLate bool, attempt int) string {
 	suffix := ""
-	if firedLate {
+	switch {
+	case attempt > 1:
+		suffix = fmt.Sprintf(" (attempt %d — earlier deliveries failed or were interrupted)", attempt)
+	case firedLate:
 		suffix = " (fired late — process may have been down at start time)"
 	}
 	return run.ApplianceName + " window started" + suffix

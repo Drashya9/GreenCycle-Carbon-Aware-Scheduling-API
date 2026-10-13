@@ -70,6 +70,7 @@ func main() {
 	)
 
 	engine := scheduler.NewEngine(runRepo, cfg.SchedulerWebhookURL, cfg.SchedulerPollInterval, cfg.SchedulerWebhookTimeout)
+	engine.SetMaxAttempts(cfg.SchedulerWebhookMaxAttempts)
 	server.EnableCron(cfg.CronSecret, engine.RunOnce)
 
 	httpServer := &http.Server{

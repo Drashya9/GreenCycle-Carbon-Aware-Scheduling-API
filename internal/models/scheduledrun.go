@@ -28,6 +28,8 @@ type ScheduledRun struct {
 	FiredAt                Null[time.Time] `db:"fired_at" json:"firedAt"`
 	AttemptCount           int             `db:"attempt_count" json:"attemptCount"`
 	LastError              Null[string]    `db:"last_error" json:"lastError"`
+	// NextAttemptAt is set while a failed delivery waits to be retried.
+	NextAttemptAt Null[time.Time] `db:"next_attempt_at" json:"nextAttemptAt"`
 }
 
 // Notification is a record of a scheduled run firing, kept regardless of whether the

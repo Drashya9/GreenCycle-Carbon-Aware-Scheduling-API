@@ -52,6 +52,27 @@ func TestRecommendationNeverStartsInThePast(t *testing.T) {
 	}
 }
 
+func TestNonPositiveDurationUsesOneSlot(t *testing.T) {
+	forecast := buildForecast(300, 50, 300)
+	window, err := FindOptimalWindow(forecast, 0, "Instant")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !window.StartTime.Equal(forecast[1].Timestamp) || !window.EndTime.Equal(forecast[1].Timestamp.Add(time.Hour)) {
+		t.Errorf("expected the single cleanest hour, got %v–%v", window.StartTime, window.EndTime)
+	}
+}
+
+// An empty forecast is what UpcomingSlots leaves when every slot (e.g. of a stale cached
+// forecast) has already started; it must be an error, not an index-out-of-range panic.
+func TestEmptyForecastIsAnError(t *testing.T) {
+	for _, d := range []float64{0, 1} {
+		if _, err := FindOptimalWindow(nil, d, "Dryer"); err == nil {
+			t.Errorf("duration %v on an empty forecast: expected an error, got nil", d)
+		}
+	}
+}
+
 func TestHugeOrNaNDurationIsRejectedNotWrapped(t *testing.T) {
 	forecast := buildForecast(flat(24, 200)...)
 

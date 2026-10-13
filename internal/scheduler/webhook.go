@@ -19,6 +19,9 @@ type WebhookPayload struct {
 	// FiredLate is true when the process was down at StartTime and this fired during
 	// the engine's startup catch-up pass instead of exactly on time.
 	FiredLate bool `json:"firedLate"`
+	// Attempt numbers deliveries of the same run (1, 2, …). Delivery is at-least-once, so
+	// receivers should treat ScheduledRunID as an idempotency key.
+	Attempt int `json:"attempt"`
 }
 
 // webhookSender is the subset of *http.Client the dispatcher needs — narrow enough to
