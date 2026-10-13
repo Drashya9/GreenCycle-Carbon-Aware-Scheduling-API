@@ -16,11 +16,16 @@ import (
 //
 // durationHours is rounded up to a whole number of slots (e.g. 1.5h -> 2 slots).
 func FindOptimalWindow(forecast []models.GridDataPoint, durationHours float64, applianceName string) (*models.OptimalWindow, error) {
+	// Checked on the float before converting: int(math.Ceil(1e308)) overflows to a negative
+	// number, which the clamp below would silently turn into a 1-hour window.
+	if math.IsNaN(durationHours) || durationHours > float64(len(forecast)) {
+		return nil, fmt.Errorf("forecast has %d hours but appliance needs %g hours", len(forecast), durationHours)
+	}
+
 	windowSize := int(math.Ceil(durationHours))
 	if windowSize < 1 {
 		windowSize = 1
 	}
-
 	if len(forecast) < windowSize {
 		return nil, fmt.Errorf("forecast has %d hours but appliance needs %d hours", len(forecast), windowSize)
 	}

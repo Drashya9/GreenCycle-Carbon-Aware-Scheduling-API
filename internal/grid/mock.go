@@ -27,7 +27,8 @@ func NewMockProvider() *MockProvider { return &MockProvider{} }
 func (m *MockProvider) Name() string { return "mock" }
 
 func (m *MockProvider) GetForecast(ctx context.Context, zipCode string) ([]models.GridDataPoint, error) {
-	now := time.Now().Truncate(time.Hour)
+	// Start at the next whole hour so all 24 slots are still ahead of us.
+	now := time.Now().Truncate(time.Hour).Add(time.Hour)
 	forecast := make([]models.GridDataPoint, 24)
 
 	for i := 0; i < 24; i++ {

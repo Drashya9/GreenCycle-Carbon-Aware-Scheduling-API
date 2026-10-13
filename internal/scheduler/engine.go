@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/models"
+	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/netguard"
 )
 
 // runRepository is the slice of ScheduledRunRepository the engine depends on — kept as
@@ -26,8 +27,11 @@ type runRepository interface {
 const batchLimit = 50
 
 type Engine struct {
-	repo              runRepository
+	repo runRepository
+	// client sends to the operator-configured default webhook; userClient sends to webhook
+	// URLs supplied per schedule, which are untrusted and so restricted to public addresses.
 	client            webhookSender
+	userClient        webhookSender
 	pollInterval      time.Duration
 	defaultWebhookURL string
 	webhookTimeout    time.Duration
@@ -38,7 +42,8 @@ type Engine struct {
 func NewEngine(repo runRepository, defaultWebhookURL string, pollInterval, webhookTimeout time.Duration) *Engine {
 	return &Engine{
 		repo:              repo,
-		client:            &http.Client{},
+		client:            &http.Client{CheckRedirect: netguard.NoRedirects},
+		userClient:        netguard.PublicOnlyClient(),
 		pollInterval:      pollInterval,
 		defaultWebhookURL: defaultWebhookURL,
 		webhookTimeout:    webhookTimeout,
@@ -113,9 +118,9 @@ func (e *Engine) fire(ctx context.Context, run models.ScheduledRun, tickTime tim
 
 	message := formatMessage(*claimed, firedLate)
 
-	webhookURL := e.defaultWebhookURL
+	webhookURL, client := e.defaultWebhookURL, e.client
 	if claimed.WebhookURL.Valid && claimed.WebhookURL.V != "" {
-		webhookURL = claimed.WebhookURL.V
+		webhookURL, client = claimed.WebhookURL.V, e.userClient
 	}
 
 	delivered := false
@@ -128,7 +133,7 @@ func (e *Engine) fire(ctx context.Context, run models.ScheduledRun, tickTime tim
 			EndTime:        claimed.EndTime,
 			FiredLate:      firedLate,
 		}
-		if err := dispatchWebhook(ctx, e.client, webhookURL, payload, e.webhookTimeout); err != nil {
+		if err := dispatchWebhook(ctx, client, webhookURL, payload, e.webhookTimeout); err != nil {
 			log.Printf("scheduler: webhook delivery failed for run %d: %v", claimed.ID, err)
 			if markErr := e.repo.MarkFailed(ctx, claimed.ID, err.Error()); markErr != nil {
 				log.Printf("scheduler: mark run %d failed: %v", claimed.ID, markErr)

@@ -38,7 +38,7 @@
         </label>
         <label>
           Zip code
-          <input id="calcZip" type="text" placeholder="85281" required>
+          <input id="calcZip" type="text" inputmode="numeric" pattern="\d{5}" maxlength="5" title="5-digit zip code" placeholder="85281" required>
         </label>
         <button type="submit">Calculate</button>
       </form>
@@ -78,7 +78,7 @@
         </label>
         <label>
           Duration (hours)
-          <input id="newApplianceDuration" type="number" step="0.1" min="0.1" placeholder="2.0" required>
+          <input id="newApplianceDuration" type="number" step="0.1" min="0.1" max="24" placeholder="2.0" required>
         </label>
         <button type="submit">Add</button>
       </form>
@@ -101,7 +101,7 @@
         </label>
         <label>
           Zip code
-          <input id="schedZip" type="text" placeholder="85281" required>
+          <input id="schedZip" type="text" inputmode="numeric" pattern="\d{5}" maxlength="5" title="5-digit zip code" placeholder="85281" required>
         </label>
         <label class="grow">
           Webhook URL <span class="optional">optional</span>

@@ -148,7 +148,11 @@ the sliding-window algorithm.
 ### `GET /calculate/multi?appliance=Dryer&zips=85281,90001,10001`
 
 Fetches every zip code concurrently (bounded worker pool, default 5 — `MULTIZONE_WORKERS`),
-racing all configured providers for each one.
+racing all configured providers for each one. Duplicate zips are collapsed, and at most 10
+distinct zips are accepted per request.
+
+All endpoints take 5-digit US zip codes, never recommend a window that has already started,
+and answer `503` (not `400`) when every forecast provider is down.
 
 ```json
 {
@@ -164,7 +168,9 @@ racing all configured providers for each one.
 ### Appliances
 
 - `GET /appliances` — list
-- `POST /appliances` — `{"name": "Hot Tub", "durationHours": 3.0}` → 201
+- `POST /appliances` — `{"name": "Hot Tub", "durationHours": 3.0}` → 201. Names are trimmed
+  and unique ignoring case (`"dryer"` conflicts with `"Dryer"` → 409); `durationHours` must
+  be in (0, 24], the forecast horizon.
 - `DELETE /appliances/{id}` → 204, or 404 if it doesn't exist
 
 Seeded on first startup: Dishwasher (1.5h), Washing Machine (1h), Dryer (1h),
@@ -174,7 +180,10 @@ EV Charger (8h), Pool Pump (4h), Water Heater (2h).
 
 - **`POST /schedules`** — `{"applianceName": "Washing Machine", "zip": "85281", "webhookUrl": "https://webhook.site/..."}`
   Computes the optimal window (same pipeline as `/calculate`) and persists it as a
-  pending run. `webhookUrl` is optional — omit it to use `SCHEDULER_WEBHOOK_URL`.
+  pending run. `webhookUrl` is optional — omit it to use `SCHEDULER_WEBHOOK_URL`. A
+  per-schedule `webhookUrl` must be a public `https://` URL: private, loopback and
+  link-local targets are rejected on create and blocked again after DNS resolution at
+  send time, and redirects are never followed.
 - `GET /schedules?status=pending` — list, optionally filtered
 - `GET /schedules/{id}` — check status: `pending` → `fired` (or `failed`, with `lastError` set)
 - `DELETE /schedules/{id}` — cancel while still pending → 204, or 404 once it's no longer pending

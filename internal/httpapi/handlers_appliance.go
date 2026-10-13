@@ -32,12 +32,13 @@ func (s *Server) handleCreateAppliance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(a.Name) == "" {
+	a.Name = strings.TrimSpace(a.Name)
+	if a.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if a.DurationHours <= 0 {
-		writeError(w, http.StatusBadRequest, "durationHours must be greater than 0")
+	if !(a.DurationHours > 0 && a.DurationHours <= maxDurationHours) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("durationHours must be greater than 0 and at most %d", maxDurationHours))
 		return
 	}
 
@@ -61,7 +62,7 @@ func (s *Server) handleDeleteAppliance(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.applianceRepo.Delete(r.Context(), id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			w.WriteHeader(http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "appliance not found")
 			return
 		}
 		writeInternalError(w, "delete appliance", err)

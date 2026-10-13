@@ -41,7 +41,9 @@ func (r *ApplianceRepository) FindAll(ctx context.Context) ([]models.Appliance, 
 func (r *ApplianceRepository) FindByNameIgnoreCase(ctx context.Context, name string) (*models.Appliance, error) {
 	var a models.Appliance
 	err := r.db.GetContext(ctx, &a,
-		`SELECT id, name, duration_hours FROM appliance WHERE LOWER(name) = LOWER($1)`, name)
+		`SELECT id, name, duration_hours FROM appliance
+		 WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+		 ORDER BY id LIMIT 1`, name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

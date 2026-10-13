@@ -93,6 +93,15 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
+	// Serve HEAD from the GET handlers; uptime monitors that probe with HEAD otherwise see 405.
+	r.Use(middleware.GetHead)
+
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "no route for "+r.Method+" "+r.URL.Path)
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, r.Method+" is not supported on "+r.URL.Path)
+	})
 
 	r.Get("/health", s.handleHealth)
 

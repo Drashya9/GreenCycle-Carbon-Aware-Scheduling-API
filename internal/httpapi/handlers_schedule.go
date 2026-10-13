@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/models"
+	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/netguard"
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/repository"
 )
 
@@ -30,6 +31,7 @@ func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ApplianceName = strings.TrimSpace(req.ApplianceName)
 	req.Zip = strings.TrimSpace(req.Zip)
+	req.WebhookURL = strings.TrimSpace(req.WebhookURL)
 	if req.ApplianceName == "" {
 		writeError(w, http.StatusBadRequest, "applianceName is required")
 		return
@@ -38,24 +40,25 @@ func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "zip is required")
 		return
 	}
-
-	appliance, err := s.applianceRepo.FindByNameIgnoreCase(r.Context(), req.ApplianceName)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			writeError(w, http.StatusBadRequest, "appliance not found: '"+req.ApplianceName+"'")
-			return
-		}
-		writeInternalError(w, "look up appliance", err)
+	if err := validateZip(req.Zip); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	window, err := s.calculateWindow(r.Context(), appliance.Name, req.Zip)
-	if err != nil {
-		if errors.Is(err, errInternal) {
-			writeInternalError(w, "calculate window", err)
+	if req.WebhookURL != "" {
+		if err := netguard.ValidateWebhookURL(req.WebhookURL); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeError(w, http.StatusBadRequest, err.Error())
+	}
+
+	appliance, err := s.findAppliance(r.Context(), req.ApplianceName)
+	if err != nil {
+		writeWindowError(w, err)
+		return
+	}
+	window, err := s.windowFor(r.Context(), appliance, req.Zip)
+	if err != nil {
+		writeWindowError(w, err)
 		return
 	}
 
@@ -102,7 +105,7 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	run, err := s.runRepo.FindByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			w.WriteHeader(http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "scheduled run not found")
 			return
 		}
 		writeInternalError(w, "get scheduled run", err)
