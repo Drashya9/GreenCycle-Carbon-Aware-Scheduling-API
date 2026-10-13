@@ -12,6 +12,8 @@ const (
 	maxDurationHours = 24
 	// maxMultiZips bounds the provider calls one /calculate/multi request can trigger.
 	maxMultiZips = 10
+	// maxNameLength keeps appliance names to something a UI can display.
+	maxNameLength = 60
 )
 
 var zipPattern = regexp.MustCompile(`^\d{5}$`)

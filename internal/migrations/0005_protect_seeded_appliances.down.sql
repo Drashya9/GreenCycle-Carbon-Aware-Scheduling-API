@@ -1,0 +1,1 @@
+ALTER TABLE appliance DROP COLUMN IF EXISTS is_seed;

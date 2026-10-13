@@ -53,6 +53,11 @@ type Server struct {
 
 	cronSecret string
 	cronTick   func(ctx context.Context) int
+
+	// Set by ConfigureSecurity; zero values mean same-origin only, no rate limit.
+	allowedOrigins []string
+	trustProxy     bool
+	writeLimiter   rateLimiter
 }
 
 func NewServer(
@@ -92,9 +97,10 @@ func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(corsMiddleware)
+	r.Use(s.cors)
 	// Serve HEAD from the GET handlers; uptime monitors that probe with HEAD otherwise see 405.
 	r.Use(middleware.GetHead)
+	r.Use(s.guardWrites)
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no route for "+r.Method+" "+r.URL.Path)
@@ -125,6 +131,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/", s.handleWebUIFile("index.html"))
 		r.Get("/style.css", s.handleWebUIFile("style.css"))
 		r.Get("/app.js", s.handleWebUIFile("app.js"))
+		r.Get("/favicon.svg", s.handleWebUIFile("favicon.svg"))
+		// Some clients request /favicon.ico regardless of the <link rel="icon">.
+		r.Get("/favicon.ico", s.handleWebUIFile("favicon.svg"))
 	}
 
 	return r
@@ -136,21 +145,6 @@ func (s *Server) handleWebUIFile(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, s.webUI, name)
 	}
-}
-
-// corsMiddleware allows calls from any origin during development, matching the Java
-// version's @CrossOrigin(origins = "*").
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

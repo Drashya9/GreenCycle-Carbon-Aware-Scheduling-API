@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -37,6 +38,11 @@ func (s *Server) handleCreateAppliance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	if utf8.RuneCountInString(a.Name) > maxNameLength {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("name must be at most %d characters", maxNameLength))
+		return
+	}
+	a.Protected = false // only seeded rows are protected; a client can't claim it
 	if !(a.DurationHours > 0 && a.DurationHours <= maxDurationHours) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("durationHours must be greater than 0 and at most %d", maxDurationHours))
 		return
@@ -61,11 +67,16 @@ func (s *Server) handleDeleteAppliance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.applianceRepo.Delete(r.Context(), id); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
 			writeError(w, http.StatusNotFound, "appliance not found")
-			return
+		case errors.Is(err, repository.ErrProtected):
+			writeError(w, http.StatusForbidden, "the seeded demo appliances can't be deleted")
+		case errors.Is(err, repository.ErrHasPendingRuns):
+			writeError(w, http.StatusConflict, "this appliance has scheduled runs waiting to fire; cancel them first")
+		default:
+			writeInternalError(w, "delete appliance", err)
 		}
-		writeInternalError(w, "delete appliance", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

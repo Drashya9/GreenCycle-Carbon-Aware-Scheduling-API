@@ -2,8 +2,9 @@ package grid
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
 	"math"
-	"math/rand"
 	"time"
 
 	"github.com/Drashya9/GreenCycle-Carbon-Aware-Scheduling-API/internal/models"
@@ -35,8 +36,7 @@ func (m *MockProvider) GetForecast(ctx context.Context, zipCode string) ([]model
 		slotTime := now.Add(time.Duration(i) * time.Hour)
 		hourOfDay := slotTime.Hour()
 
-		jitter := (rand.Float64() - 0.5) * 60
-		intensity := math.Max(50, hourlyBase[hourOfDay]+jitter)
+		intensity := math.Max(50, hourlyBase[hourOfDay]+jitter(zipCode, slotTime))
 
 		forecast[i] = models.GridDataPoint{
 			Timestamp:       slotTime,
@@ -45,4 +45,14 @@ func (m *MockProvider) GetForecast(ctx context.Context, zipCode string) ([]model
 	}
 
 	return forecast, nil
+}
+
+// jitter is a deterministic ±30 offset per (zip, hour): the same request always gets the
+// same answer, and different zips differ in a stable way, so Multi-Zone comparisons mean
+// something instead of reflecting fresh random noise on every call.
+func jitter(zipCode string, slot time.Time) float64 {
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%s|%d", zipCode, slot.Unix())
+	unit := float64(h.Sum64()>>11) / (1 << 53) // uniform in [0, 1)
+	return (unit - 0.5) * 60
 }

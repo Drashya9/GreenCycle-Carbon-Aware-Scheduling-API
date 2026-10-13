@@ -4,12 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GreenCycle</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true"></span>
+      <img class="brand-mark" src="/favicon.svg" alt="" width="22" height="22">
       <span class="brand-name">GreenCycle</span>
     </div>
     <div class="status" id="statusPill">
@@ -83,10 +84,12 @@
         <button type="submit">Add</button>
       </form>
 
-      <table class="data-table" id="applianceTable">
-        <thead><tr><th>Name</th><th>Duration</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="table-wrap">
+        <table class="data-table" id="applianceTable">
+          <thead><tr><th>Name</th><th>Duration</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- ── Schedules ─────────────────────────────────────────────── -->
@@ -110,10 +113,12 @@
         <button type="submit">Schedule</button>
       </form>
 
-      <table class="data-table" id="scheduleTable">
-        <thead><tr><th>Appliance</th><th>Zip</th><th>Start</th><th>Avg gCO₂/kWh</th><th>Status</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="table-wrap">
+        <table class="data-table" id="scheduleTable">
+          <thead><tr><th>Appliance</th><th>Zip</th><th>Start</th><th>Avg gCO₂/kWh</th><th>Status</th><th>Details</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </section>
   </main>
 

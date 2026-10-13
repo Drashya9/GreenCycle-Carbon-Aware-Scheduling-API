@@ -49,11 +49,33 @@ function fmtClock(iso) {
   } catch { return iso; }
 }
 
+// When the appliance actually finishes. The window's endTime is rounded up to whole hourly
+// slots (a 1.5h dishwasher gets a 2h window), so it overstates the finish time.
+function finishTime(w) {
+  const a = appliances.find((x) => x.name.toLowerCase() === w.applianceName.toLowerCase());
+  if (!a) return w.endTime;
+  return new Date(new Date(w.startTime).getTime() + a.durationHours * 3600000).toISOString();
+}
+
 // Built client-side rather than using the API's recommendation string, which is in UTC —
-// so the headline matches the local-time Start/End shown beneath it.
+// so the headline matches the local-time times shown beneath it.
 function recommendationText(w) {
   return `Run your ${w.applianceName} at ${fmtClock(w.startTime)} — avg. ` +
-    `${Math.round(w.averageCarbonIntensity)} gCO₂/kWh (done by ${fmtClock(w.endTime)}).`;
+    `${Math.round(w.averageCarbonIntensity)} gCO₂/kWh (done by ${fmtClock(finishTime(w))}).`;
+}
+
+// Runs fn with the button disabled, so a double-click can't send the same request twice.
+async function withBusy(button, fn) {
+  if (button) button.disabled = true;
+  try {
+    await fn();
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function submitButton(form) {
+  return form.querySelector('button[type="submit"]');
 }
 
 // ── tabs ─────────────────────────────────────────────────────────────────
@@ -111,15 +133,13 @@ function renderApplianceTable() {
     return;
   }
   for (const a of appliances) {
-    const delBtn = el("button", {
-      class: "ghost",
-      text: "Delete",
-      onclick: () => deleteAppliance(a.id),
-    });
+    const action = a.protected
+      ? el("span", { class: "protected-label", text: "Built-in", title: "Seeded demo appliances can't be deleted" })
+      : el("button", { class: "ghost", text: "Delete", onclick: (e) => deleteAppliance(a, e.currentTarget) });
     tbody.appendChild(el("tr", {}, [
       el("td", { text: a.name }),
       el("td", { class: "mono", text: `${a.durationHours}h` }),
-      el("td", {}, [delBtn]),
+      el("td", {}, [action]),
     ]));
   }
 }
@@ -130,32 +150,38 @@ async function loadAppliances() {
   renderApplianceTable();
 }
 
-async function deleteAppliance(id) {
-  try {
-    await api(`/appliances/${id}`, { method: "DELETE" });
-    toast("Appliance deleted");
-    await loadAppliances();
-  } catch (err) {
-    toast(err.message, true);
-  }
+async function deleteAppliance(a, button) {
+  if (!confirm(`Delete "${a.name}"? This can't be undone.`)) return;
+  await withBusy(button, async () => {
+    try {
+      await api(`/appliances/${a.id}`, { method: "DELETE" });
+      toast("Appliance deleted");
+      await loadAppliances();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 }
 
 document.getElementById("applianceForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const form = e.target;
   const name = document.getElementById("newApplianceName").value.trim();
   const durationHours = parseFloat(document.getElementById("newApplianceDuration").value);
-  try {
-    await api("/appliances", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, durationHours }),
-    });
-    e.target.reset();
-    toast(`Added ${name}`);
-    await loadAppliances();
-  } catch (err) {
-    toast(err.message, true);
-  }
+  await withBusy(submitButton(form), async () => {
+    try {
+      await api("/appliances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, durationHours }),
+      });
+      form.reset();
+      toast(`Added ${name}`);
+      await loadAppliances();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 });
 
 // ── calculate ────────────────────────────────────────────────────────────
@@ -166,20 +192,22 @@ document.getElementById("calcForm").addEventListener("submit", async (e) => {
   const zip = document.getElementById("calcZip").value.trim();
   const area = document.getElementById("calcResult");
   area.innerHTML = "";
-  try {
-    const w = await api(`/calculate?appliance=${encodeURIComponent(appliance)}&zip=${encodeURIComponent(zip)}`);
-    area.appendChild(el("div", { class: "result-card" }, [
-      el("div", { class: "headline", text: recommendationText(w) }),
-      el("div", { class: "metric-row" }, [
-        el("div", { class: "metric" }, [el("span", { class: "label", text: "Start" }), el("span", { class: "value", text: fmtTime(w.startTime) })]),
-        el("div", { class: "metric" }, [el("span", { class: "label", text: "End" }), el("span", { class: "value", text: fmtTime(w.endTime) })]),
-        el("div", { class: "metric" }, [el("span", { class: "label", text: "Avg gCO₂/kWh" }), el("span", { class: "value accent", text: w.averageCarbonIntensity })]),
-        el("div", { class: "metric" }, [el("span", { class: "label", text: "Provider" }), el("span", { class: "value", text: w.provider || "—" })]),
-      ]),
-    ]));
-  } catch (err) {
-    area.appendChild(el("div", { class: "error-card", text: err.message }));
-  }
+  await withBusy(submitButton(e.target), async () => {
+    try {
+      const w = await api(`/calculate?appliance=${encodeURIComponent(appliance)}&zip=${encodeURIComponent(zip)}`);
+      area.appendChild(el("div", { class: "result-card" }, [
+        el("div", { class: "headline", text: recommendationText(w) }),
+        el("div", { class: "metric-row" }, [
+          el("div", { class: "metric" }, [el("span", { class: "label", text: "Start" }), el("span", { class: "value", text: fmtTime(w.startTime) })]),
+          el("div", { class: "metric" }, [el("span", { class: "label", text: "Done by" }), el("span", { class: "value", text: fmtTime(finishTime(w)) })]),
+          el("div", { class: "metric" }, [el("span", { class: "label", text: "Avg gCO₂/kWh" }), el("span", { class: "value accent", text: w.averageCarbonIntensity })]),
+          el("div", { class: "metric" }, [el("span", { class: "label", text: "Provider" }), el("span", { class: "value", text: w.provider || "—" })]),
+        ]),
+      ]));
+    } catch (err) {
+      area.appendChild(el("div", { class: "error-card", text: err.message }));
+    }
+  });
 });
 
 // ── multi-zone ───────────────────────────────────────────────────────────
@@ -190,34 +218,54 @@ document.getElementById("multiForm").addEventListener("submit", async (e) => {
   const zips = document.getElementById("multiZips").value.trim();
   const area = document.getElementById("multiResult");
   area.innerHTML = "";
-  try {
-    const data = await api(`/calculate/multi?appliance=${encodeURIComponent(appliance)}&zips=${encodeURIComponent(zips)}`);
-    const grid = el("div", { class: "zone-grid" });
-    for (const r of data.results) {
-      const isGreenest = data.greenest && r.window && r.window.averageCarbonIntensity === data.greenest.averageCarbonIntensity;
-      const row = el("div", { class: "zone-row" + (isGreenest ? " best" : "") });
-      row.appendChild(el("span", { class: "zip", text: r.zip }));
-      if (r.window) {
-        row.appendChild(el("span", { class: "zone-detail", text: fmtTime(r.window.startTime) }));
-        row.appendChild(el("span", { class: "zone-value", text: `${r.window.averageCarbonIntensity} gCO₂/kWh` }));
-        if (isGreenest) {
-          row.appendChild(el("span", { class: "badge", text: "Greenest" }));
+  await withBusy(submitButton(e.target), async () => {
+    try {
+      const data = await api(`/calculate/multi?appliance=${encodeURIComponent(appliance)}&zips=${encodeURIComponent(zips)}`);
+      const grid = el("div", { class: "zone-grid" });
+      let badged = false; // on a tie, badge only the first greenest zip
+      for (const r of data.results) {
+        const isGreenest = !badged && data.greenest && r.window &&
+          r.window.averageCarbonIntensity === data.greenest.averageCarbonIntensity;
+        if (isGreenest) badged = true;
+        const row = el("div", { class: "zone-row" + (isGreenest ? " best" : "") });
+        row.appendChild(el("span", { class: "zip", text: r.zip }));
+        if (r.window) {
+          row.appendChild(el("span", { class: "zone-detail", text: fmtTime(r.window.startTime) }));
+          row.appendChild(el("span", { class: "zone-value", text: `${r.window.averageCarbonIntensity} gCO₂/kWh` }));
+          if (isGreenest) {
+            row.appendChild(el("span", { class: "badge", text: "Greenest" }));
+          }
+        } else {
+          row.appendChild(el("span", { class: "zone-detail", text: r.error }));
         }
-      } else {
-        row.appendChild(el("span", { class: "zone-detail", text: r.error }));
+        grid.appendChild(row);
       }
-      grid.appendChild(row);
+      area.appendChild(grid);
+    } catch (err) {
+      area.appendChild(el("div", { class: "error-card", text: err.message }));
     }
-    area.appendChild(grid);
-  } catch (err) {
-    area.appendChild(el("div", { class: "error-card", text: err.message }));
-  }
+  });
 });
 
 // ── schedules ────────────────────────────────────────────────────────────
 
 function statusBadge(status) {
   return el("span", { class: `badge-status ${status}`, text: status });
+}
+
+// What happened to a run, so a failure always says why.
+function runDetails(r) {
+  if (r.status === "failed") {
+    return `Failed after ${r.attemptCount} attempt${r.attemptCount === 1 ? "" : "s"}: ${r.lastError || "unknown error"}`;
+  }
+  if (r.status === "pending" && r.nextAttemptAt) {
+    return `Retrying at ${fmtClock(r.nextAttemptAt)} (attempt ${r.attemptCount + 1}). Last error: ${r.lastError || "unknown"}`;
+  }
+  if (r.status === "fired" && r.firedAt) {
+    return `Fired ${fmtTime(r.firedAt)}` + (r.attemptCount > 1 ? ` on attempt ${r.attemptCount}` : "");
+  }
+  if (r.status === "pending") return "Waiting for its start time";
+  return "";
 }
 
 async function loadSchedules() {
@@ -230,13 +278,13 @@ async function loadSchedules() {
   }
   tbody.innerHTML = "";
   if (!runs || runs.length === 0) {
-    tbody.appendChild(el("tr", { class: "empty-row" }, [el("td", { colspan: "6", text: "No scheduled runs yet." })]));
+    tbody.appendChild(el("tr", { class: "empty-row" }, [el("td", { colspan: "7", text: "No scheduled runs yet." })]));
     return;
   }
   runs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   for (const r of runs) {
     const cancelBtn = r.status === "pending"
-      ? el("button", { class: "ghost", text: "Cancel", onclick: () => cancelSchedule(r.id) })
+      ? el("button", { class: "ghost", text: "Cancel", onclick: (e) => cancelSchedule(r, e.currentTarget) })
       : el("span", { text: "" });
     tbody.appendChild(el("tr", {}, [
       el("td", { text: r.applianceName }),
@@ -244,48 +292,68 @@ async function loadSchedules() {
       el("td", { class: "mono", text: fmtTime(r.startTime) }),
       el("td", { class: "mono", text: r.averageCarbonIntensity }),
       el("td", {}, [statusBadge(r.status)]),
+      el("td", { class: "details", text: runDetails(r) }),
       el("td", {}, [cancelBtn]),
     ]));
   }
 }
 
-async function cancelSchedule(id) {
-  try {
-    await api(`/schedules/${id}`, { method: "DELETE" });
-    toast("Schedule cancelled");
-    await loadSchedules();
-  } catch (err) {
-    toast(err.message, true);
-  }
+async function cancelSchedule(r, button) {
+  if (!confirm(`Cancel the ${r.applianceName} run at ${fmtTime(r.startTime)}?`)) return;
+  await withBusy(button, async () => {
+    try {
+      await api(`/schedules/${r.id}`, { method: "DELETE" });
+      toast("Schedule cancelled");
+      await loadSchedules();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 }
 
 document.getElementById("scheduleForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const form = e.target;
   const applianceName = document.getElementById("schedAppliance").value;
   const zip = document.getElementById("schedZip").value.trim();
   const webhookUrl = document.getElementById("schedWebhook").value.trim();
   const payload = { applianceName, zip };
   if (webhookUrl) payload.webhookUrl = webhookUrl;
-  try {
-    await api("/schedules", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    e.target.reset();
-    toast("Scheduled");
-    await loadSchedules();
-  } catch (err) {
-    toast(err.message, true);
-  }
+  await withBusy(submitButton(form), async () => {
+    try {
+      await api("/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      form.reset();
+      toast("Scheduled");
+      await loadSchedules();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 });
 
 // ── boot ─────────────────────────────────────────────────────────────────
 
-(async function init() {
-  await refreshHealth();
-  await loadAppliances();
-  await loadSchedules();
-  setInterval(refreshHealth, 10000);
-  setInterval(loadSchedules, 15000);
+function loadAppliancesQuietly() {
+  return loadAppliances().catch((err) => toast(`Couldn't load appliances: ${err.message}`, true));
+}
+
+// Each load fails independently, and the refresh timers start regardless, so one failed
+// request at startup can't leave the page frozen. Polling pauses while the tab is hidden.
+(function init() {
+  refreshHealth();
+  loadAppliancesQuietly();
+  loadSchedules();
+
+  setInterval(() => { if (!document.hidden) refreshHealth(); }, 10000);
+  setInterval(() => { if (!document.hidden) loadSchedules(); }, 15000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    refreshHealth();
+    loadSchedules();
+    if (appliances.length === 0) loadAppliancesQuietly();
+  });
 })();

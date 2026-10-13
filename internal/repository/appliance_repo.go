@@ -16,6 +16,12 @@ var ErrNotFound = errors.New("not found")
 // ErrConflict means a write violated a uniqueness constraint, e.g. a duplicate appliance name.
 var ErrConflict = errors.New("conflict")
 
+// ErrProtected means the appliance is a seeded demo fixture, which can't be deleted.
+var ErrProtected = errors.New("protected")
+
+// ErrHasPendingRuns means the appliance still has scheduled runs waiting to fire.
+var ErrHasPendingRuns = errors.New("has pending runs")
+
 // pgUniqueViolation is Postgres's SQLSTATE for unique_violation.
 const pgUniqueViolation = "23505"
 
@@ -34,7 +40,7 @@ func NewApplianceRepository(db *sqlx.DB) *ApplianceRepository {
 
 func (r *ApplianceRepository) FindAll(ctx context.Context) ([]models.Appliance, error) {
 	var out []models.Appliance
-	err := r.db.SelectContext(ctx, &out, `SELECT id, name, duration_hours FROM appliance ORDER BY id`)
+	err := r.db.SelectContext(ctx, &out, `SELECT id, name, duration_hours, is_seed FROM appliance ORDER BY id`)
 	return out, err
 }
 
@@ -76,8 +82,14 @@ func (r *ApplianceRepository) Create(ctx context.Context, a *models.Appliance) e
 	return err
 }
 
+// Delete removes a user-created appliance. Seeded demo appliances are refused
+// (ErrProtected), and so is one that still has runs waiting to fire (ErrHasPendingRuns) —
+// deleting it would otherwise silently cascade-delete those runs.
 func (r *ApplianceRepository) Delete(ctx context.Context, id int64) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM appliance WHERE id = $1`, id)
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM appliance a
+		WHERE a.id = $1 AND NOT a.is_seed
+		  AND NOT EXISTS (SELECT 1 FROM scheduled_run s WHERE s.appliance_id = a.id AND s.status = 'pending')`, id)
 	if err != nil {
 		return err
 	}
@@ -85,8 +97,29 @@ func (r *ApplianceRepository) Delete(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		return ErrNotFound
+	if n == 1 {
+		return nil
 	}
-	return nil
+
+	// Nothing was deleted; work out why.
+	var why struct {
+		IsSeed  bool `db:"is_seed"`
+		Pending bool `db:"pending"`
+	}
+	err = r.db.GetContext(ctx, &why, `
+		SELECT a.is_seed,
+		       EXISTS (SELECT 1 FROM scheduled_run s WHERE s.appliance_id = a.id AND s.status = 'pending') AS pending
+		FROM appliance a WHERE a.id = $1`, id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrNotFound
+	case err != nil:
+		return err
+	case why.IsSeed:
+		return ErrProtected
+	default:
+		// Either it still has pending runs, or it had one at delete time that has fired or
+		// been cancelled since; either way the caller should resolve its runs and retry.
+		return ErrHasPendingRuns
+	}
 }

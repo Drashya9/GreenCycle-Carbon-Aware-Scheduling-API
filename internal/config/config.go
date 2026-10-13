@@ -61,6 +61,17 @@ type Config struct {
 
 	// CronSecret enables GET /api/cron/tick when set. Callers must send it as a Bearer token.
 	CronSecret string
+
+	// CORSAllowedOrigins lists extra browser origins allowed to call the API cross-origin.
+	// Empty means same-origin only; the bundled dashboard never needs CORS.
+	CORSAllowedOrigins []string
+
+	// TrustProxyHeaders takes client IPs from X-Forwarded-For (for rate limiting). Defaults
+	// on when running on Vercel, whose edge sets that header itself.
+	TrustProxyHeaders bool
+
+	// WriteRateLimitPerMinute caps POST/DELETE requests per client IP; 0 disables it.
+	WriteRateLimitPerMinute int
 }
 
 func Load() Config {
@@ -100,6 +111,10 @@ func Load() Config {
 		RunMigrations:    getBool("RUN_MIGRATIONS", true),
 		SchedulerEnabled: getBool("SCHEDULER_ENABLED", true),
 		CronSecret:       os.Getenv("CRON_SECRET"),
+
+		CORSAllowedOrigins:      splitCSV(os.Getenv("CORS_ALLOWED_ORIGINS")),
+		TrustProxyHeaders:       getBool("TRUST_PROXY_HEADERS", os.Getenv("VERCEL") == "1"),
+		WriteRateLimitPerMinute: getInt("WRITE_RATE_LIMIT_PER_MINUTE", 30),
 	}
 }
 

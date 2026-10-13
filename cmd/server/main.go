@@ -72,6 +72,11 @@ func main() {
 	engine := scheduler.NewEngine(runRepo, cfg.SchedulerWebhookURL, cfg.SchedulerPollInterval, cfg.SchedulerWebhookTimeout)
 	engine.SetMaxAttempts(cfg.SchedulerWebhookMaxAttempts)
 	server.EnableCron(cfg.CronSecret, engine.RunOnce)
+	server.ConfigureSecurity(httpapi.SecurityOptions{
+		AllowedOrigins:    cfg.CORSAllowedOrigins,
+		TrustProxyHeaders: cfg.TrustProxyHeaders,
+		WritesPerMinute:   cfg.WriteRateLimitPerMinute,
+	})
 
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.Port,

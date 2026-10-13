@@ -54,11 +54,24 @@ func (c *Cached) GetForecast(ctx context.Context, zipCode string) ([]models.Grid
 		return nil, err
 	}
 
-	if encoded, jsonErr := json.Marshal(forecast); jsonErr == nil {
-		if setErr := c.redis.Set(ctx, key, encoded, c.ttl).Err(); setErr != nil {
-			log.Printf("grid cache: redis SET %s failed: %v", key, setErr)
+	// Under a second from the hour boundary, skip caching: a 0 TTL would mean "never expire".
+	if ttl := cacheTTL(time.Now(), c.ttl); ttl >= time.Second {
+		if encoded, jsonErr := json.Marshal(forecast); jsonErr == nil {
+			if setErr := c.redis.Set(ctx, key, encoded, ttl).Err(); setErr != nil {
+				log.Printf("grid cache: redis SET %s failed: %v", key, setErr)
+			}
 		}
 	}
 
 	return forecast, nil
+}
+
+// cacheTTL caps the configured TTL at the next hour boundary. Forecasts are hourly; one
+// cached across the boundary keeps serving a first slot that has already started, which
+// costs the algorithm an hour of choice and makes 24-hour appliances unschedulable.
+func cacheTTL(now time.Time, configured time.Duration) time.Duration {
+	if untilHour := now.Truncate(time.Hour).Add(time.Hour).Sub(now); untilHour < configured {
+		return untilHour
+	}
+	return configured
 }

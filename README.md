@@ -98,6 +98,9 @@ private methods) that only compile because the test lives in the same package.
 | [internal/netguard/netguard_test.go](internal/netguard/netguard_test.go) | `netguard` | SSRF guard: webhook URL validation (https only; no loopback, private, link-local, metadata or CGNAT targets), dial-time blocking of non-public addresses, and redirects never followed. |
 | [internal/httpapi/handlers_cron_test.go](internal/httpapi/handlers_cron_test.go), [handlers_contract_test.go](internal/httpapi/handlers_contract_test.go), [validation_test.go](internal/httpapi/validation_test.go) | `httpapi` | Cron endpoint auth; API contract (empty lists are `[]`, nullable fields are plain values, 409 on duplicates, 500s never leak driver errors); input validation (zips, durations, names, webhook URLs, multi-zone dedupe/cap); 503 on provider outages; JSON 404/405 and `HEAD`. |
 | [internal/models/null_test.go](internal/models/null_test.go), [internal/config/config_test.go](internal/config/config_test.go) | `models`, `config` | Nullable fields marshal as values or `null`; `REDIS_URL` falls back to `KV_URL`; serverless switches default on. |
+| [internal/httpapi/security_test.go](internal/httpapi/security_test.go) | `httpapi` | Public-deployment protections: CORS only for allowlisted origins; cross-site writes rejected (CSRF) while same-site, allowlisted and non-browser clients pass; the per-client write limit, including one shared through a real Redis across "instances"; delete rules (403 seeded, 409 pending runs); name length cap. |
+| [internal/repository/appliance_delete_test.go](internal/repository/appliance_delete_test.go) | `repository` | Against a real Postgres: seeded appliances can't be deleted; an appliance with pending runs can't be deleted until they're cancelled; `FindAll` reports which are protected (migration `0005`). |
+| [internal/grid/mock_test.go](internal/grid/mock_test.go), [internal/httpapi/handlers_webui_test.go](internal/httpapi/handlers_webui_test.go) | `grid`, `httpapi` | The mock forecast is deterministic per zip and starts at the next hour; cached forecasts expire at the hour boundary; the favicon is served as SVG and linked from the page. |
 
 The repository tests connect via `DATABASE_URL` (defaults to
 `postgres://greencycle:greencycle@localhost:5432/greencycle?sslmode=disable`) and run the
@@ -105,11 +108,10 @@ real migrations on connect — point it at any empty Postgres and it self-provis
 schema. Skips automatically if unreachable, so it never blocks CI or a machine without
 Postgres running; CI provides a real Postgres and Redis.
 
-**Coverage by package** (`go test ./... -cover`, with a real Postgres): `algorithm` 100%,
-`netguard` ~92%, `models` ~91%, `scheduler` ~78%, `config` ~78%, `httpapi` ~75%,
-`repository` ~65% (0% without a database, since its tests skip), `grid` ~7% (the
-concurrency/caching behavior above, but not the real `electricitymaps`/`watttime` HTTP
-clients); `db` and `cache` have no tests yet.
+**Coverage by package** (`go test ./... -cover`, with a real Postgres and Redis): `algorithm`
+100%, `netguard` ~92%, `models` ~91%, `scheduler` ~79%, `httpapi` ~79%, `config` ~78%,
+`repository` ~70% (0% without a database, since its tests skip), `grid` ~24% (not the real
+`electricitymaps`/`watttime` HTTP clients); `db` and `cache` have no tests yet.
 
 ---
 
@@ -177,10 +179,23 @@ and answer `503` (not `400`) when every forecast provider is down.
 - `POST /appliances` — `{"name": "Hot Tub", "durationHours": 3.0}` → 201. Names are trimmed
   and unique ignoring case (`"dryer"` conflicts with `"Dryer"` → 409); `durationHours` must
   be in (0, 24], the forecast horizon.
-- `DELETE /appliances/{id}` → 204, or 404 if it doesn't exist
+- `DELETE /appliances/{id}` → 204; 404 if it doesn't exist; 403 for a seeded appliance;
+  409 while it still has scheduled runs waiting to fire (cancel them first)
 
 Seeded on first startup: Dishwasher (1.5h), Washing Machine (1h), Dryer (1h),
-EV Charger (8h), Pool Pump (4h), Water Heater (2h).
+EV Charger (8h), Pool Pump (4h), Water Heater (2h). They're `"protected": true` and can't be
+deleted, so a public deployment can't be emptied for everyone.
+
+### Public-deployment protections
+
+- **Same-origin by default.** No CORS headers unless `CORS_ALLOWED_ORIGINS` lists an origin
+  (the bundled dashboard is same-origin and never needs them).
+- **Cross-site writes are rejected.** A `POST`/`DELETE` whose `Origin` is another site gets
+  403 (CSRF), even for "simple" requests CORS wouldn't stop. Requests with no `Origin`
+  (curl, server-to-server) are allowed.
+- **Writes are rate limited** per client IP (`WRITE_RATE_LIMIT_PER_MINUTE`, default 30) →
+  `429` with `Retry-After`. The counter lives in Redis when configured, so the limit holds
+  across instances; behind Vercel the client IP comes from `X-Forwarded-For`.
 
 ### Scheduling
 
