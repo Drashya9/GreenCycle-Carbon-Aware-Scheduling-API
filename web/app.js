@@ -64,6 +64,15 @@ function recommendationText(w) {
     `${Math.round(w.averageCarbonIntensity)} gCO₂/kWh (done by ${fmtClock(finishTime(w))}).`;
 }
 
+// Display names for forecast sources. "mock" is the built-in simulated forecast — labelled
+// as such, with a note, so simulated numbers are never mistaken for live grid data.
+const PROVIDER_LABELS = { mock: "Simulated", electricitymaps: "Electricity Maps", watttime: "WattTime" };
+const SIMULATED_NOTE = "Demo forecast — simulated, modeled on a typical US grid day (not live grid data).";
+
+function providerLabel(provider) {
+  return PROVIDER_LABELS[provider] || provider || "—";
+}
+
 // Runs fn with the button disabled, so a double-click can't send the same request twice.
 async function withBusy(button, fn) {
   if (button) button.disabled = true;
@@ -201,8 +210,9 @@ document.getElementById("calcForm").addEventListener("submit", async (e) => {
           el("div", { class: "metric" }, [el("span", { class: "label", text: "Start" }), el("span", { class: "value", text: fmtTime(w.startTime) })]),
           el("div", { class: "metric" }, [el("span", { class: "label", text: "Done by" }), el("span", { class: "value", text: fmtTime(finishTime(w)) })]),
           el("div", { class: "metric" }, [el("span", { class: "label", text: "Avg gCO₂/kWh" }), el("span", { class: "value accent", text: w.averageCarbonIntensity })]),
-          el("div", { class: "metric" }, [el("span", { class: "label", text: "Provider" }), el("span", { class: "value", text: w.provider || "—" })]),
+          el("div", { class: "metric" }, [el("span", { class: "label", text: "Forecast" }), el("span", { class: "value", text: providerLabel(w.provider) })]),
         ]),
+        ...(w.provider === "mock" ? [el("div", { class: "note", text: SIMULATED_NOTE })] : []),
       ]));
     } catch (err) {
       area.appendChild(el("div", { class: "error-card", text: err.message }));
@@ -241,6 +251,9 @@ document.getElementById("multiForm").addEventListener("submit", async (e) => {
         grid.appendChild(row);
       }
       area.appendChild(grid);
+      if (data.results.some((r) => r.window && r.window.provider === "mock")) {
+        area.appendChild(el("div", { class: "note", text: SIMULATED_NOTE }));
+      }
     } catch (err) {
       area.appendChild(el("div", { class: "error-card", text: err.message }));
     }
